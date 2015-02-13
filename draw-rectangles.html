@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html>
+<head lang="en">
+    <meta charset="UTF-8">
+    <title></title>
+    <style>
+
+        .svg-container {
+            width: 100%;
+        }
+
+        .svg-full {
+            width: 100%;
+            cursor: crosshair;
+            background-color: black;
+        }
+
+        .title {
+            text-align: center;
+            font-weight: bold;
+        }
+
+        .rect {
+            stroke: #EEEEEE;
+            fill: lightgray;
+        }
+    </style>
+</head>
+<body>
+<div class="title">You can draw rectangles down below</div>
+<div class="svg-container">
+    <svg id="svg" class="svg-full"
+         version="1.1" xmlns="http://www.w3.org/2000/svg">Not Supported
+    </svg>
+</div>
+<script>
+    (function () {
+        var svg = document.getElementById("svg");
+        var svgns = "http://www.w3.org/2000/svg";
+        var id = 0;
+        svg.setAttribute('height', window.innerHeight);
+        var mouseDownProperties = {x: null, y: null};
+        var lastRectangle = null;
+        var drawing = false;
+        var svgBoundingRectangle = svg.getBoundingClientRect();
+        var getIntersectionListDetected = typeof svg.getIntersectionList == "function";
+
+        /**
+         * /used to keep track of pixels that are being occupied  by something.
+         * @type {Array.<Array.<boolean>>}
+         */
+        var bitmap = !getIntersectionListDetected ? [] : null;
+
+        /**
+         * * 
+         * @param e the event object
+         * @returns {Number} returns variable offsetX, solves crossbrowser compatibility issues
+         */
+        var getOffsetX = function (e) {
+            return isValidNumber(e.offsetX) ? e.offsetX : e.layerX - svgBoundingRectangle.x;
+        };
+
+        /**
+         * *
+         * @param e the event object
+         * @returns {Number} returns variable offsetY, solves crossbrowser compatibility issues
+         */
+        var getOffsetY = function (e) {
+            return  isValidNumber(e.offsetY) ? e.offsetY : e.layerY - svgBoundingRectangle.y;
+        };
+        
+        /**
+         * * Determines if the value is a valid number
+         * @param val
+         * @returns {boolean} 
+         */
+        var isValidNumber = function(val){
+            return typeof val == 'number' && !isNaN(val);
+        };
+
+        /**
+         * * function called when we receive an onmousedown event 
+         * @param e the event object
+         */
+        svg.onmousedown = function (e) {
+            // fix firefox issue where clicking on rectangle is trying to drag rectangles
+            if (e.stopPropagation) {
+                e.stopPropagation();
+            }
+            if (e.preventDefault) {
+                e.preventDefault();
+            }
+
+            mouseDownProperties.x = getOffsetX(e);
+            mouseDownProperties.y = getOffsetY(e);
+            var coordinates = calculateCoordinates(e);
+            lastRectangle = initializeRectangle(coordinates.x, coordinates.y, coordinates.width, coordinates.height, id);
+            drawing = true;
+        };
+
+        /**
+         * * function called when we receive an onmousemove event
+         * @param e the event object
+         */
+        svg.onmousemove = function (e) {
+            if (drawing && lastRectangle) {
+                var coordinates = calculateCoordinates(e);
+                updateRectangleSize(lastRectangle, coordinates.x, coordinates.y, coordinates.width, coordinates.height);
+            }
+
+        };
+
+        /**
+         * * function called when we receive an onmouseup event
+         * @param e the event object
+         */
+        svg.onmouseup = function (e) {
+            drawing = false;
+            mouseDownProperties.x = null;
+            mouseDownProperties.y = null;
+            var svgRectProps = getSvgRectProperties(lastRectangle);
+            // remove rectangle if they are present but insivible
+            if (svgRectProps.height > 0 && svgRectProps.width > 0) {
+                detectCollision(lastRectangle);
+                updateBitmap(lastRectangle);
+            } else {
+                svg.removeChild(lastRectangle);
+            }
+            lastRectangle = null;
+            id++;
+        };
+
+        /**
+         * *  detects a collision between rectangles and alerts the user if that is the case
+         * @param rectangle
+         */
+        var detectCollision = function (rectangle) {
+            if (detectCollisionSafely(rectangle)) {
+                alert('Rectangles on top of each other!');
+            }
+        };
+        
+        /**
+         * * Determines if a collision between rectangles happened 
+         * @param rectangle
+         * @returns {boolean}
+         */
+        var detectCollisionSafely = function (rectangle) {
+            // use bitmap strategy if browser does not support function SVGElement.getIntersectionList
+            if (getIntersectionListDetected) {
+                var svgRectProps = getSvgRectProperties(rectangle);
+                var svgRect = svg.createSVGRect();
+                svgRect.x = svgRectProps.x;
+                svgRect.y = svgRectProps.y;
+                svgRect.height = svgRectProps.height;
+                svgRect.width = svgRectProps.width;
+                // it will match self since it is already drawn so you only collide if there are more than 1
+                return svg.getIntersectionList(svgRect, svg).length > 1;
+            } else {
+                return detectCollisionFromBitmap(rectangle);
+            }
+
+        };
+        
+        /**
+         * * use the bitmap to determine if collision between rectangles happened
+         * @param rectangle
+         * @returns {boolean}
+         */
+        var detectCollisionFromBitmap = function (rectangle) {
+            var points = calculatePointsFromSvgRectangle(rectangle);
+
+            for (var i = points.top; i < points.bottom + 1; i++) {
+                if (bitmap[i]) {
+                    for (var j = points.left; j < points.right + 1; j++) {
+                        if (bitmap[i][j]) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        };
+        
+        /**
+         * * updates the bitmap, adds the corresponding rectangle  
+         * @param rectangle
+         */
+        var updateBitmap = function (rectangle) {
+            if (!getIntersectionListDetected) {
+                var points = calculatePointsFromSvgRectangle(rectangle);
+                for (var i = points.top; i < points.bottom + 1; i++) {
+                    if (!bitmap[i]) {
+                        bitmap[i] = [];
+                    }
+                    for (var j = points.left; j < points.right + 1; j++) {
+                        if (!bitmap[i][j]) {
+                            bitmap[i][j] = true;
+                        }
+                    }
+                }
+            }
+
+        };
+
+        /**
+         * * calculates coordinates from event object
+         * @param e
+         * @returns {{x:number,y:number,width:number,height:number}}
+         */
+        var calculateCoordinates = function (e) {
+            var coordinates = {};
+            var x1 = getOffsetX(e);
+            var y1 = getOffsetY(e);
+            var x0 = mouseDownProperties.x ? mouseDownProperties.x : getOffsetX(e);
+            var y0 = mouseDownProperties.y ? mouseDownProperties.y : getOffsetY(e);
+            var deltaX = x0 - x1;
+            var deltaY = y0 - y1;
+            coordinates.x = x0 > x1 ? x1 : x0;
+            coordinates.y = y0 > y1 ? y1 : y0;
+            coordinates.width = Math.abs(deltaX);
+            coordinates.height = Math.abs(deltaY);
+
+            return coordinates;
+        };
+
+        /**
+         * * returns an object with the coordinate properties read from an SVGRect object
+         * @param {SVGRect} svgElement
+         * @returns {{x:number,y:number,width:number,height:number}}
+         */
+        var getSvgRectProperties = function (svgElement) {
+            var props = {};
+            props.x = Number(svgElement.getAttribute('x'));
+            props.y = Number(svgElement.getAttribute('y'));
+            props.width = Number(svgElement.getAttribute('width'));
+            props.height = Number(svgElement.getAttribute('height'));
+            return props;
+        };
+
+        /**
+         * * returns an object with the coordinate points from SVGRect object
+         * @param svgElement
+         * @returns {{left:number,top:number,right:number, bottom:number}}
+         */
+        var calculatePointsFromSvgRectangle = function (svgElement) {
+            var points = {};
+            var props = getSvgRectProperties(svgElement);
+            points.left = props.x;
+            points.top = props.y;
+            points.right = props.x + props.width;
+            points.bottom = props.y + props.height;
+            return points;
+        };
+        
+        /**
+         * * Initializes rectangle and adds it to the root svg
+         * @param x
+         * @param y
+         * @param width
+         * @param height
+         * @param id
+         * @returns {HTMLElement}
+         */
+        var initializeRectangle = function (x, y, width, height, id) {
+            var rect = document.createElementNS(svgns, "rect");
+            rect.setAttribute('x', x);
+            rect.setAttribute('y', y);
+            rect.setAttribute('width', width);
+            rect.setAttribute('height', height);
+            rect.id = "rect" + id;
+            rect.classList.add('rect');
+            svg.appendChild(rect);
+
+            return rect;
+        };
+
+        /**
+         * * Updates the rectangle size 
+         * @param rectangle
+         * @param x
+         * @param y
+         * @param width
+         * @param height
+         */
+        var updateRectangleSize = function (rectangle, x, y, width, height) {
+                rectangle.setAttribute('x', x);
+                rectangle.setAttribute('y', y);
+                rectangle.setAttribute('width', width);
+                rectangle.setAttribute('height', height);
+
+
+        };
+
+        /**
+         * * react to the window.onresize event by changing the drawing area accordingly
+         * @param e
+         */
+        window.onresize = function (e) {
+            svg.setAttribute('height', window.innerHeight);
+            svg.setAttribute('width', window.innerWidth);
+
+
+        };
+
+    })
+    ()
+</script>
+
+
+</body>
+</html>
